@@ -1,0 +1,84 @@
+import logging
+import requests
+from bs4 import BeautifulSoup
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram import executor
+import asyncio
+
+# Set up logging level
+logging.basicConfig(level=logging.INFO)
+
+# Create a bot instance
+bot = Bot(token='YOUR_BOT_TOKEN')
+
+# Create a dispatcher for event handling
+dp = Dispatcher(bot, storage=MemoryStorage())
+
+# URL of the website to scrape for news
+url = "https://forklog.com/news"
+
+# Last published news
+last_published_news = {}
+
+
+# Function to retrieve the latest news
+def get_latest_news():
+    response = requests.get(url)
+    soup = BeautifulSoup(response.content, "html.parser")
+
+    # Find the block with the latest news
+    post_item = soup.find("div", class_="post_item")
+
+    # Get the title, announcement, and news link
+    title = post_item.find("p").text.strip()
+    news_link = post_item.find("a")["href"]
+
+    # Get the full news content
+    full_news_response = requests.get(news_link)
+    full_news_soup = BeautifulSoup(full_news_response.content, "html.parser")
+    news_content = full_news_soup.find("div", class_="post_content").text.strip()
+
+    # Exclude unwanted text and everything after it
+    unwanted_text = "Подписывайтесь на ForkLog в социальных сетях"
+    if unwanted_text in news_content:
+        news_content = news_content.split(unwanted_text)[0].strip()
+
+    return title, news_content
+
+
+# Handler for the /start command
+@dp.message_handler(commands=['start'])
+async def start_command(message: types.Message):
+    global last_published_news
+    await message.reply("Bot is running. Waiting for news.")
+    chat_id = message.chat.id
+    last_published_news[chat_id] = None  # Initialize the last published news
+    asyncio.create_task(check_for_news(chat_id))
+
+
+# Function to send news to the chat
+async def send_news_to_chat(chat_id, news_content):
+    # Send the news content to the desired chat username
+    await bot.send_message(chat_id="@wabucudrop", text=news_content)
+
+
+# Function to check for news periodically
+async def check_for_news(chat_id):
+    while True:
+        await asyncio.sleep(10)  # Pause for 10 seconds
+
+        try:
+            latest_news = get_latest_news()
+            if latest_news != last_published_news[chat_id]:
+                news_title, news_content = latest_news
+                last_published_news[chat_id] = latest_news
+
+                await send_news_to_chat(chat_id, news_content)
+        except Exception as e:
+            logging.error(f"Error while checking for news: {str(e)}")
+
+
+# Start the bot
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
